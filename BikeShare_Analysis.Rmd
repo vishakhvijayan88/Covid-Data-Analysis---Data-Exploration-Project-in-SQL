@@ -1,0 +1,161 @@
+---
+title: "BikeShare Analysis"
+author: "Vishakh Vijayan"
+date: "2022-10-08"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# BikeShare Analysis
+
+## Introduction
+
+### Data cleaning, transforming and wrangling
+
+This report shows step-by-step analysis of Bike-Share data of hypothetic Chicago Bike Share Company. The data is hosted in the link here and publicly available: https://divvy-tripdata.s3.amazonaws.com/index.html. The required analysis is for last 12 months and hence this data is downloaded from the source in .csv format.
+
+Due to large data sets, the files are more than 100mb which caused difficulty to work with in cleaning and transforming. Hence decided to do this step in Google BigQuery using SQL Query, but BigQuery sandbox has a file size limit to upload into the database. For this, they were converted to .xls format to decrease the file size and then separated the longitude and latitude data into separate .csv files and remaining columns for 12 months in separate .csv files. Some initial cleaning up were done in Excel Power Query to identify null values in ride_id and dates. Null values in stations were kept unless the latitude and longitude are also nulls. This is assuming that, rides can be start and end any where not necessarily a station. Also, if duration of the ride is zero, they were also removed from the tables. After cleaning, separating and saving as .csv, all files were now below 100mb and uploaded into tables in a database in BigQuery.
+
+After uploading the files, files were merged into single raw data table after combining inidividual monthly tables and lon-lat tables using union and joins and saved as view. Any further cleaning was done based on contexts and analyzed in detail using SQL Query. The cleaned raw data is downloaded for analysis in R and saved in working directory.
+
+### Data Visualization and further analysis
+
+For further analysis we need to create visualizations to understand the rides taking place across the last 12 months. To do this, we need to first install and load the required packages.
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(dplyr)
+```
+
+Next let's import the cleaned dataset which has been downloaded from bigquery and stored in the local working directory.
+
+```{r}
+BikeShareData <- read_csv("BikeShareData_Clean.csv")
+head(BikeShareData)
+```
+
+The initial data shows all the columns imported correctly. Let's look at the data types and overview of the dataframe.
+
+```{r}
+str(BikeShareData)
+```
+
+From this we found that started_at and ended_at columns are stored as character data types. We need to change them into date data type. For this, we will first extract the first 10 date characters into new columns and then convert them into date columns using mutate function.
+
+```{r}
+RidesLast12Months <- BikeShareData %>%
+  select(ride_id, member_casual, rideable_type, started_at, ended_at)
+
+RidesLast12Months <- RidesLast12Months %>%
+  transform(started_at = substr(started_at, 1, 10), ended_at = substr(ended_at, 1, 10))
+
+RidesLast12Months$started_at <- ymd(RidesLast12Months$started_at)
+RidesLast12Months$ended_at <- ymd(RidesLast12Months$ended_at)
+
+head(RidesLast12Months)
+```
+
+We have transformed the started_at and ended_at columns to date datatype.
+Now let's look at how the ride counts look like throughout last 12 months. For this we will use the ride start dates and see the count of rides throughout the year.
+
+```{r}
+RideCounts_Last12Months <- RidesLast12Months %>%
+  select(ride_id, member_casual, started_at) %>%
+  group_by(member_casual, started_at) %>%
+  summarize(ride_count = n())
+
+head(RideCounts_Last12Months)
+```
+
+We have created a data frame with summary of ride counts by dates and ride types
+
+Now let's visualize how the rides are distributed throughout last 12 month period to see if there is any pattern in the rides.
+
+```{r}
+ggplot(RideCounts_Last12Months)+geom_point(mapping = aes(x = started_at, y = ride_count, color = member_casual)) + geom_smooth(method = "gam", mapping = aes(x = started_at, y = ride_count)) + labs(title = "Bike Share: Rides in Last 12 Months", subtitle = "Comparison of Casual and Member rides")  
+```
+  
+From the scatter-plot, there is a very clear pattern that riders during winter times end of October through end of May are significantly less. So from this it looks like instead of an yearly pass, people will be much more attracted towards a 6 month membership.
+
+```{r}
+ggplot(RideCounts_Last12Months)+geom_point(mapping = aes(x = started_at, y = ride_count, color = member_casual)) + geom_smooth(method = "gam", mapping = aes(x = started_at, y = ride_count)) + facet_wrap(~member_casual) + labs(title = "Bike Share: Rides in last 12 Months", subtitle = "Casual Rides and Member Rides through last 12 months")
+
+```
+
+From this, we can see that there is a small dip in casual riders in summer, after the initial peak. But the member riders were quite consistently high during this period. Now let's see how the same data by ride types.
+
+```{r}
+
+RideCounts_Last12Months <- RidesLast12Months %>%
+  select(ride_id, member_casual, rideable_type, started_at) %>%
+  group_by(member_casual, rideable_type, started_at) %>%
+  summarize(ride_count = n())
+
+head(RideCounts_Last12Months)
+
+ggplot(RideCounts_Last12Months) + geom_point(mapping = aes(x = started_at, y = ride_count, color = rideable_type)) + geom_smooth(method = "gam", mapping = aes(x = started_at, y = ride_count)) + facet_wrap(~member_casual) + labs(title = "Bike Share: Ride Counts by Ride Types and rider type", subtitle = "Shows the difference in rider behavior by bike type")
+  
+```
+
+Let's look at the data in a different way, using the bar charts.
+
+
+```{r}
+RideCounts_Last12Months <- RidesLast12Months %>%
+  select(ride_id, member_casual, rideable_type, started_at)
+
+ggplot(RideCounts_Last12Months) + geom_bar(mapping = aes(x = rideable_type, fill = rideable_type)) + facet_wrap(~member_casual) + labs(title = "Bike Share: Ride count by rider type and bike type")
+
+```
+
+Let's see the ride counts in specific periods: Sep - Mar and Apr - Aug
+First let us look date range Sep - Mar
+
+```{r}
+RideCounts_SepMar <- RidesLast12Months %>%
+  select(ride_id, member_casual, rideable_type, started_at) %>%
+  filter(started_at >= '2021-09-01', started_at <= '2022-03-31')
+
+ggplot(RideCounts_SepMar) + geom_bar(mapping = aes(x = rideable_type, fill = rideable_type)) + facet_wrap(~member_casual) + labs(title = "Bike Share: Ride count between Sep 2021 and Mar 2022") 
+```
+
+Now let's look at date range Apr - Aug
+
+```{r}
+RideCounts_AprAug <- RidesLast12Months %>%
+  select(ride_id, member_casual, rideable_type, started_at) %>%
+  filter(started_at >= '2022-04-01', started_at <= '2022-08-31')
+
+ggplot(RideCounts_AprAug) + geom_bar(mapping = aes(x = rideable_type, fill = rideable_type)) + facet_wrap(~member_casual) + labs(title = "Bike Share: Ride count between Apr 2022 and Aug 2022")
+```
+
+No specific insights we could find from these, although we can still notice that casual riders mostly prefer to ride electric bikes compared to member riders.
+
+## Insights
+
+The Bike share data was prepared, processed and analyzed to derive the insights of casual riders and member riders. From the analysis, we found that member rides and casual rides are 58% and 42% of total ride counts. Member riders prefer classic bikes more compared to casual riders. 
+
+Casual riders' average ride duration is high compared to member riders which could be due to the casual riders mostly take routes between long distance ride stations. Member riders most frequently ride between stations include Ellis Ave & 60Th St, University Ave & 57th St, Calumet Ave & 33Rd St, and State St & 33Rd St. The casual riders between these stations are also quite high, but not as high as the member riders. The data is not sufficient to know if these casual riders are same returning customers. More data is needed to confirm this. If this is true, these casual customers could be converted to member riders. Most casual ride counts are between stations Streeter Dr & Grand Ave, Dusable Lake Shore Dr & Monroe St, Millennium Park, and Michigan Ave & Oak St.
+
+Casual riders prefer both classic bikes and electric bikes equally but slightly more preference towards classic bikes. They also use docked bikes, but the docked bike rides are significantly less. This could be due to less number of docking stations, but this data is not sufficient in this regard to make an inference.
+
+Looking at the ride counts distribution in the last 12 months for any seasonality, it is found that the ride count during winter is significantly low compared to summer. This is true for both casual rides and member rides. Hence there is no rider type specific seasonality. But we found that there is a small dip in casual ride count, after the initial peak in summer but member rides are steady throughout summer until September after the initial peak in start of summer.
+
+## Conclusion and Recommendations
+
+
+
+#### Include a six month membership plan along with the one year plan
+
+Most of our member riders ride between stations Ellis Ave & 60Th St, University Ave & 57th St, Calumet Ave & 33Rd St, and State St & 33Rd St. There are significant number of casual rides between these stations although not same number of rides as member rides. This could be due to many of the riders preferring not to have a membership because they only use it during the summer.
+
+#### Include more electric bikes
+
+It is found that casual ride duration are much higher compared to member rides. It could be hard for them to use classic bikes from far stations on a daily basis in their routes. As we can see that our casual riders have opted electric bikes and classic bikes almost equally. If more electric bikes are available consistently, these riders will prefer to join as members. But more investigation is needed in this as bike count by bike type is not available.
+
+
+
+
+
